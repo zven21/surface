@@ -26,6 +26,56 @@ defmodule Surface.Compiler.Parser do
   end
 
   ## Common helpers
+  defparsecp(
+    :binary,
+    string("\"")
+    |> repeat(
+      choice([
+        string("\\\""),
+        utf8_char(not: ?")
+      ])
+    )
+    |> string("\"")
+  )
+
+  defparsecp(
+    :charlist,
+    string("\'")
+    |> repeat(
+      choice([
+        string("\\'"),
+        utf8_char(not: ?')
+      ])
+    )
+    |> string("\'")
+  )
+
+  defparsecp(
+    :tuple,
+    string("{")
+    |> repeat(
+      choice([
+        parsec(:tuple),
+        parsec(:binary),
+        parsec(:charlist),
+        utf8_char(not: ?})
+      ])
+    )
+    |> string("}")
+  )
+
+  expression =
+    ignore(string("{{"))
+    |> line()
+    |> repeat(
+      choice([
+        parsec(:tuple),
+        parsec(:binary),
+        parsec(:charlist),
+        lookahead_not(string("}}")) |> utf8_char([])
+      ])
+    )
+    |> optional(string("}}"))
 
   tag =
     ascii_char([?a..?z, ?A..?Z])
@@ -39,10 +89,7 @@ defmodule Surface.Compiler.Parser do
     ])
 
   attribute_expr =
-    ignore(string("{{"))
-    |> line()
-    |> repeat(lookahead_not(string("}}")) |> utf8_char([]))
-    |> optional(string("}}"))
+    expression
     |> post_traverse(:attribute_expr)
 
   attribute_value =
@@ -136,12 +183,8 @@ defmodule Surface.Compiler.Parser do
   end
 
   ## Regular node
-
   interpolation =
-    ignore(string("{{"))
-    |> line()
-    |> repeat(lookahead_not(string("}}")) |> utf8_char([]))
-    |> optional(string("}}"))
+    expression
     |> post_traverse(:interpolation)
 
   text_with_interpolation = utf8_string([not: ?<, not: ?{], min: 1)

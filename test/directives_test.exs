@@ -30,13 +30,42 @@ defmodule Surface.DirectivesTest do
     end
   end
 
+  defmodule DivWithSlotUsingIf do
+    use Surface.Component
+
+    prop show, :boolean
+    slot default
+
+    def render(assigns) do
+      ~H"""
+      <div><slot :if={{ @show }}/></div>
+      """
+    end
+  end
+
+  defmodule DivWithSlotUsingFor do
+    use Surface.Component
+
+    prop repeat, :integer
+    slot default
+
+    def render(assigns) do
+      ~H"""
+      <div><slot :for={{ _i <- 1..@repeat }}/></div>
+      """
+    end
+  end
+
   describe ":props for a component" do
     test "passing keyword list of props" do
       assigns = %{}
 
-      code = """
-      <DivWithProps :props={{ class: "text-xs", hidden: false, content: "dynamic props content" }} />
-      """
+      code =
+        quote do
+          ~H"""
+          <DivWithProps :props={{ class: "text-xs", hidden: false, content: "dynamic props content" }} />
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div class="text-xs block">
@@ -48,9 +77,12 @@ defmodule Surface.DirectivesTest do
     test "static props override dynamic props" do
       assigns = %{}
 
-      code = """
-      <DivWithProps content="static content" :props={{ class: "text-xs", hidden: false, content: "dynamic props content" }} />
-      """
+      code =
+        quote do
+          ~H"""
+          <DivWithProps content="static content" :props={{ class: "text-xs", hidden: false, content: "dynamic props content" }} />
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div class="text-xs block">
@@ -62,9 +94,12 @@ defmodule Surface.DirectivesTest do
     test "using an assign" do
       assigns = %{opts: %{class: "text-xs", hidden: false, content: "dynamic props content"}}
 
-      code = """
-      <DivWithProps :props={{ @opts }} />
-      """
+      code =
+        quote do
+          ~H"""
+          <DivWithProps :props={{ @opts }} />
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div class="text-xs block">
@@ -160,11 +195,14 @@ defmodule Surface.DirectivesTest do
     test "using multiple modifiers" do
       assigns = %{items: [:a, :b]}
 
-      code = """
-      <div :for.index.with_index={{ {i, j} <- @items }}>
-        i: {{ i }}, j: {{ j }}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <div :for.index.with_index={{ {i, j} <- @items }}>
+            i: {{ i }}, j: {{ j }}
+          </div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -175,15 +213,39 @@ defmodule Surface.DirectivesTest do
              """
     end
 
+    test "modifiers on components" do
+      assigns = %{items: [1, 2]}
+
+      code =
+        quote do
+          ~H"""
+          <Div :for.with_index={{ {iii, index} <- @items }}>
+            Item: {{ iii }}, Index: {{ index }}
+          </Div>
+          """
+        end
+
+      assert render_live(code, assigns) =~ """
+             <div>
+               Item: 1, Index: 0
+             </div><div>
+               Item: 2, Index: 1
+             </div>
+             """
+    end
+
     test "raise compile error for unknown modifiers" do
       assigns = %{items: [%{id: 1, name: "First"}]}
 
-      code = """
-      <br/>
-      <div :for.unknown={{ @items }}>
-        Index: {{ index }}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <br/>
+          <div :for.unknown={{ @items }}>
+            Index: {{ index }}
+          </div>
+          """
+        end
 
       message = """
       code:2: unknown modifier "unknown" for directive :for\
@@ -197,12 +259,15 @@ defmodule Surface.DirectivesTest do
     test "raise compile error for modifiers with multiple clauses" do
       assigns = %{a: [1, 2], b: [1, 2]}
 
-      code = """
-      <br/>
-      <div :for.with_index={{ i <- a, j <- b }}>
-        Index: {{ index }}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <br/>
+          <div :for.with_index={{ i <- a, j <- b }}>
+            Index: {{ index }}
+          </div>
+          """
+        end
 
       message = """
       code:2: cannot apply modifier "with_index" on generators with multiple clauses\
@@ -218,11 +283,14 @@ defmodule Surface.DirectivesTest do
     test "in components" do
       assigns = %{items: [1, 2]}
 
-      code = """
-      <Div :for={{ i <- @items }}>
-        Item: {{i}}
-      </Div>
-      """
+      code =
+        quote do
+          ~H"""
+          <Div :for={{ i <- @items }}>
+            Item: {{i}}
+          </Div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -236,11 +304,14 @@ defmodule Surface.DirectivesTest do
     test "in html tags" do
       assigns = %{items: [1, 2]}
 
-      code = """
-      <div :for={{ i <- @items }}>
-        Item: {{i}}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <div :for={{ i <- @items }}>
+            Item: {{i}}
+          </div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -263,15 +334,33 @@ defmodule Surface.DirectivesTest do
              """
     end
 
+    test "in slots" do
+      code =
+        quote do
+          ~H"""
+          <DivWithSlotUsingFor repeat=3>
+            <span>surface</span>
+          </DivWithSlotUsingFor>
+          """
+        end
+
+      assert render_live(code) == """
+             <div><span>surface</span><span>surface</span><span>surface</span></div>
+             """
+    end
+
     test "with larger generator expression" do
       assigns = %{items1: [1, 2], items2: [3, 4]}
 
-      code = """
-      <div :for={{ i1 <- @items1, i2 <- @items2, i1 < 4 }}>
-        Item1: {{i1}}
-        Item2: {{i2}}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <div :for={{ i1 <- @items1, i2 <- @items2, i1 < 4 }}>
+            Item1: {{i1}}
+            Item2: {{i2}}
+          </div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -296,11 +385,14 @@ defmodule Surface.DirectivesTest do
     test "with_index modifier" do
       assigns = %{items: [1, 2]}
 
-      code = """
-      <div :for.with_index={{ {item, index} <- @items }}>
-        Item: {{ item }}, Index: {{ index }}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <div :for.with_index={{ {item, index} <- @items }}>
+            Item: {{ item }}, Index: {{ index }}
+          </div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -314,11 +406,14 @@ defmodule Surface.DirectivesTest do
     test "index modifier with generator" do
       assigns = %{items: [1, 2]}
 
-      code = """
-      <div :for.index={{ index <- @items }}>
-        Index: {{ index }}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <div :for.index={{ index <- @items }}>
+            Index: {{ index }}
+          </div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -332,11 +427,14 @@ defmodule Surface.DirectivesTest do
     test "index modifier with list" do
       assigns = %{items: [1, 2]}
 
-      code = """
-      <div :for.index={{ @items }}>
-        Index: {{ index }}
-      </div>
-      """
+      code =
+        quote do
+          ~H"""
+          <div :for.index={{ @items }}>
+            Index: {{ index }}
+          </div>
+          """
+        end
 
       assert render_live(code, assigns) =~ """
              <div>
@@ -352,14 +450,17 @@ defmodule Surface.DirectivesTest do
     test "in components" do
       assigns = %{show: true, dont_show: false}
 
-      code = """
-      <Div :if={{ @show }}>
-        Show
-      </Div>
-      <Div :if={{ @dont_show }}>
-        Dont's show
-      </Div>
-      """
+      code =
+        quote do
+          ~H"""
+          <Div :if={{ @show }}>
+            Show
+          </Div>
+          <Div :if={{ @dont_show }}>
+            Dont's show
+          </Div>
+          """
+        end
 
       assert render_live(code, assigns) == """
              <div>
@@ -397,6 +498,21 @@ defmodule Surface.DirectivesTest do
 
       assert render_static(code) == """
              <col class="show">
+             """
+    end
+
+    test "in slots" do
+      code =
+        quote do
+          ~H"""
+          <DivWithSlotUsingIf show=true>1</DivWithSlotUsingIf>
+          <DivWithSlotUsingIf show=false>2</DivWithSlotUsingIf>
+          <DivWithSlotUsingIf show=true>3</DivWithSlotUsingIf>
+          """
+        end
+
+      assert render_live(code) == """
+             <div>1</div><div></div><div>3</div>
              """
     end
   end
@@ -523,9 +639,12 @@ defmodule Surface.DirectivesSyncTest do
         }
       }
 
-      code = """
-      <DivWithProps :props={{ @opts }} />
-      """
+      code =
+        quote do
+          ~H"""
+          <DivWithProps :props={{ @opts }} />
+          """
+        end
 
       {:warn, message} = capture_warning(code, assigns)
 

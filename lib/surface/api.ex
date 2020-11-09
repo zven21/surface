@@ -23,6 +23,7 @@ defmodule Surface.API do
     :form,
     :keyword,
     # Private
+    :generator,
     :context_put,
     :context_get
   ]
@@ -133,6 +134,22 @@ defmodule Surface.API do
   end
 
   @doc false
+  def get_assigns(module) do
+    if Module.open?(module) do
+      module
+      |> Module.get_attribute(:assigns)
+      |> Kernel.||(%{})
+      |> Enum.map(fn {name, %{line: line}} -> {name, line} end)
+    else
+      data = if function_exported?(module, :__data__, 0), do: module.__data__(), else: []
+      props = if function_exported?(module, :__props__, 0), do: module.__props__(), else: []
+      slots = if function_exported?(module, :__slots__, 0), do: module.__slots__(), else: []
+
+      Enum.map(data ++ props ++ slots, fn %{name: name, line: line} -> {name, line} end)
+    end
+  end
+
+  @doc false
   def get_slots(module) do
     used_slots =
       for %{name: name, line: line} <- Module.get_attribute(module, :used_slot) || [] do
@@ -140,6 +157,14 @@ defmodule Surface.API do
       end
 
     (Module.get_attribute(module, :slot) || []) ++ used_slots
+  end
+
+  @doc false
+  def get_defaults(module) do
+    for %{name: name, opts: opts} <- Module.get_attribute(module, :data),
+        Keyword.has_key?(opts, :default) do
+      {name, opts[:default]}
+    end
   end
 
   defp quoted_data_funcs(env) do

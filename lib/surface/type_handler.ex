@@ -119,17 +119,18 @@ defmodule Surface.TypeHandler do
     original = original || value
 
     with {:ok, ast} <- normalize_expr(value, line: meta.line, file: meta.file),
+         _ <- Surface.Compiler.Helpers.perform_assigns_checks(ast, meta),
          {clauses, opts} <- split_clauses_and_options(ast),
          true <- clauses != [] or opts != [],
          handler <- handler(type),
          {:ok, value} <- handler.expr_to_quoted(type, name, clauses, opts, meta, original) do
       value
     else
-      {:error, {line, error, token}} ->
+      {:error, {position, error, token}} ->
         IOHelper.syntax_error(
           error <> token,
           meta.file,
-          line
+          Surface.Compiler.Helpers.position_to_line(position)
         )
 
       {:error, expected} ->

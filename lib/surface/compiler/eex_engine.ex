@@ -151,9 +151,9 @@ defmodule Surface.Compiler.EExEngine do
     # TODO: map names somehow?
     slot_content_expr =
       quote generated: true do
-        if @inner_content do
-          render_inner(
-            @inner_content,
+        if @inner_block do
+          render_block(
+            @inner_block,
             {
               unquote(slot_name),
               unquote(slot_index),
@@ -219,13 +219,13 @@ defmodule Surface.Compiler.EExEngine do
 
     dynamic_props_expr = handle_dynamic_props(dynamic_props)
 
-    if module.__use_context__? do
+    if module.__use_context__?() do
       Module.put_attribute(meta.caller.module, :use_context?, true)
     end
 
     context_expr =
       cond do
-        module.__slots__() == [] and not module.__use_context__? ->
+        module.__slots__() == [] and not module.__use_context__?() ->
           quote generated: true do
             %{}
           end
@@ -520,13 +520,14 @@ defmodule Surface.Compiler.EExEngine do
          %AST.Container{
            children: children,
            meta: %AST.Meta{
-             module: mod
+             module: mod,
+             line: line
            }
          }
          | nodes
        ])
        when not is_nil(mod) do
-    [require_expr(mod), to_dynamic_nested_html(children) | to_dynamic_nested_html(nodes)]
+    [require_expr(mod, line), to_dynamic_nested_html(children) | to_dynamic_nested_html(nodes)]
   end
 
   defp to_dynamic_nested_html([%AST.Container{children: children} | nodes]) do
@@ -635,24 +636,26 @@ defmodule Surface.Compiler.EExEngine do
       |> Enum.into(%{})
 
     [
-      require_expr(mod),
+      require_expr(mod, component.meta.line),
       %{component | templates: templates_by_name} | to_dynamic_nested_html(nodes)
     ]
   end
 
-  defp to_dynamic_nested_html([%AST.Error{message: message, meta: %AST.Meta{module: mod}} | nodes])
+  defp to_dynamic_nested_html([
+         %AST.Error{message: message, meta: %AST.Meta{module: mod, line: line}} | nodes
+       ])
        when not is_nil(mod),
        do: [
-         require_expr(mod),
+         require_expr(mod, line),
          ~S(<span style="color: red; border: 2px solid red; padding: 3px"> Error: ),
-         message,
+         escape_message(message),
          ~S(</span>) | to_dynamic_nested_html(nodes)
        ]
 
   defp to_dynamic_nested_html([%AST.Error{message: message} | nodes]),
     do: [
       ~S(<span style="color: red; border: 2px solid red; padding: 3px"> Error: ),
-      message,
+      escape_message(message),
       ~S(</span>) | to_dynamic_nested_html(nodes)
     ]
 
@@ -722,10 +725,10 @@ defmodule Surface.Compiler.EExEngine do
     expr
   end
 
-  defp require_expr(module) do
+  defp require_expr(module, line) do
     %AST.Expr{
       value:
-        quote generated: true do
+        quote generated: true, line: line do
           require unquote(module)
         end,
       meta: %AST.Meta{}
@@ -734,5 +737,10 @@ defmodule Surface.Compiler.EExEngine do
 
   defp is_child_component?(state) do
     state.depth > 0 and Enum.member?(state.context, :template)
+  end
+
+  defp escape_message(message) do
+    {:safe, message_iodata} = Phoenix.HTML.html_escape(message)
+    IO.iodata_to_binary(message_iodata)
   end
 end

@@ -3,23 +3,82 @@ defmodule Surface.Compiler.Helpers do
   alias Surface.Compiler.CompileMeta
   alias Surface.IOHelper
 
+  @builtin_assigns [
+    :flash,
+    :live_action,
+    :socket,
+    :inner_block,
+    :__context__,
+    :__surface__
+  ]
+
   def interpolation_to_quoted!(text, meta) do
     case Code.string_to_quoted(text, file: meta.file, line: meta.line) do
       {:ok, expr} ->
         expr
 
-      {:error, {line, error, token}} ->
-        IOHelper.syntax_error(error <> token, meta.file, line)
+      {:error, {position, error, token}} ->
+        IOHelper.syntax_error(error <> token, meta.file, position_to_line(position))
 
       {:error, message} ->
         IOHelper.compile_error(message, meta.file, meta.line)
     end
   end
 
+  def perform_assigns_checks(expr, meta) do
+    used_assigns = used_assigns(expr)
+
+    if meta.checks[:no_undefined_assigns] do
+      validate_no_undefined_assigns(used_assigns, meta.caller)
+    end
+  end
+
+  def validate_no_undefined_assigns(used_assigns, caller) do
+    defined_assigns = Keyword.keys(Surface.API.get_assigns(caller.module))
+
+    undefined_assigns = Keyword.drop(used_assigns, @builtin_assigns ++ defined_assigns)
+
+    available_assigns =
+      Enum.map_join(defined_assigns, ", ", fn name -> "@" <> to_string(name) end)
+
+    assign_message =
+      if Enum.empty?(defined_assigns),
+        do: "No assigns are defined in #{inspect(caller.module)}.",
+        else: "Available assigns in #{inspect(caller.module)}: #{available_assigns}."
+
+    for {assign, assign_meta} <- undefined_assigns do
+      message = """
+      undefined assign `@#{to_string(assign)}`.
+
+      #{assign_message}
+
+      Hint: You can define assigns using any of the available macros (`prop`, `data` and `slot`).
+
+      For instance: `prop #{assign}, :any`
+      """
+
+      assign_line = assign_meta[:line] || caller.line
+
+      IOHelper.warn(message, caller, fn _ -> assign_line end)
+    end
+  end
+
+  @spec used_assigns(Macro.t()) :: list(atom())
+  def used_assigns(expr) do
+    {_expr, assigns} =
+      Macro.prewalk(expr, [], fn
+        {:@, _meta, [{assign, meta, _}]} = expr, assigns -> {expr, [{assign, meta} | assigns]}
+        expr, assigns -> {expr, assigns}
+      end)
+
+    assigns
+  end
+
   def to_meta(%{line: line} = tree_meta, %CompileMeta{
         line_offset: offset,
         file: file,
-        caller: caller
+        caller: caller,
+        checks: checks
       }) do
     AST.Meta
     |> Kernel.struct(tree_meta)
@@ -29,6 +88,7 @@ defmodule Surface.Compiler.Helpers do
     |> Map.put(:line_offset, offset)
     |> Map.put(:file, file)
     |> Map.put(:caller, caller)
+    |> Map.put(:checks, checks)
   end
 
   def to_meta(%{line: line} = tree_meta, %AST.Meta{line_offset: offset} = parent_meta) do
@@ -81,40 +141,63 @@ defmodule Surface.Compiler.Helpers do
 
   def is_blank_or_empty(_node), do: false
 
-  def actual_module(mod_str, env) do
+  # We don't expect this to fail as `mod_str` should have been
+  # already validated at the parser level
+  def actual_component_module!(mod_str, env) do
     {:ok, ast} = Code.string_to_quoted(mod_str)
-
-    case Macro.expand(ast, env) do
-      mod when is_atom(mod) ->
-        {:ok, mod}
-
-      _ ->
-        {:error, "#{mod_str} is not a valid module name"}
-    end
+    Macro.expand(ast, env)
   end
 
-  def check_module_loaded(module, mod_str) do
+  def check_module_loaded(module, node_alias) do
     case Code.ensure_compiled(module) do
       {:module, mod} ->
         {:ok, mod}
 
       {:error, _reason} ->
-        {:error, "module #{mod_str} could not be loaded"}
+        message = "module #{inspect(module)} could not be loaded"
+
+        if !String.contains?(node_alias, ".") and inspect(module) == node_alias do
+          {:error, message, hint_for_unloaded_module(node_alias)}
+        else
+          {:error, message}
+        end
     end
   end
 
-  def check_module_is_component(module, mod_str) do
+  def check_module_is_component(module) do
     if function_exported?(module, :component_type, 0) do
       {:ok, module}
     else
-      {:error, "module #{mod_str} is not a component"}
+      {:error, "module #{inspect(module)} is not a component"}
     end
   end
 
-  def module_name(name, caller) do
-    with {:ok, mod} <- actual_module(name, caller),
-         {:ok, mod} <- check_module_loaded(mod, name) do
-      check_module_is_component(mod, name)
+  def validate_component_module(mod, node_alias) do
+    with {:ok, _mod} <- check_module_loaded(mod, node_alias),
+         {:ok, _mod} <- check_module_is_component(mod) do
+      :ok
     end
+  end
+
+  def position_to_line(position) when is_list(position) do
+    Keyword.fetch!(position, :line)
+  end
+
+  def position_to_line(line) do
+    line
+  end
+
+  defp hint_for_unloaded_module(node_alias) do
+    """
+    Hint: Make sure module `#{node_alias}` can be successfully compiled.
+
+    If the module is namespaced, you can use its full name. For instance:
+
+      <MyProject.Components.#{node_alias}>
+
+    or add a proper alias so you can use just `<#{node_alias}>`:
+
+      alias MyProject.Components.#{node_alias}
+    """
   end
 end

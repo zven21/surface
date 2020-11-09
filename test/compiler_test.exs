@@ -418,40 +418,6 @@ defmodule Surface.CompilerTest do
            } = node
   end
 
-  test "calling @inner_content.([]) succeeds" do
-    id = :erlang.unique_integer([:positive]) |> to_string()
-
-    view_code = """
-    defmodule TestLiveComponent_#{id} do
-      use Surface.Component
-
-      def render(assigns) do
-        ~H"<div> {{ @inner_content.([]) }} </div>"
-      end
-    end
-    """
-
-    assert {{:module, _, _, _}, _} =
-             Code.eval_string(view_code, [], %{__ENV__ | file: "code.exs", line: 1})
-  end
-
-  test "calling .inner_content.([]) succeeds" do
-    id = :erlang.unique_integer([:positive]) |> to_string()
-
-    view_code = """
-    defmodule TestLiveComponent_#{id} do
-      use Surface.Component
-
-      def render(assigns) do
-        ~H"<div :for={{col <- @cols}}> {{ col.inner_content.([]) }} </div>"
-      end
-    end
-    """
-
-    assert {{:module, _, _, _}, _} =
-             Code.eval_string(view_code, [], %{__ENV__ | file: "code.exs", line: 1})
-  end
-
   describe "macro components" do
     test "expanded at top level" do
       code = """
@@ -618,7 +584,9 @@ defmodule Surface.CompilerSyncTest do
 
   alias Surface.CompilerTest.{Button, Column}, warn: false
 
-  test "warning when component cannot be loaded" do
+  test "warning when a aliased component cannot be loaded" do
+    alias Components.But, warn: false
+
     code = """
     <div>
       <But />
@@ -627,20 +595,48 @@ defmodule Surface.CompilerSyncTest do
 
     {:warn, line, message} = run_compile(code, __ENV__)
 
-    assert message =~ "cannot render <But> (module But could not be loaded)"
+    assert message =~ ~r/cannot render <But> \(module Components.But could not be loaded\)\s*/
     assert line == 2
   end
 
-  test "warning when module is not a component" do
+  test "warning with hint when a unaliased component cannot be loaded" do
     code = """
     <div>
-      <Enum />
+      <But />
     </div>
     """
 
     {:warn, line, message} = run_compile(code, __ENV__)
 
-    assert message =~ "cannot render <Enum> (module Enum is not a component)"
+    assert message =~ """
+           cannot render <But> (module But could not be loaded)
+
+           Hint: Make sure module `But` can be successfully compiled.
+
+           If the module is namespaced, you can use its full name. For instance:
+
+             <MyProject.Components.But>
+
+           or add a proper alias so you can use just `<But>`:
+
+             alias MyProject.Components.But
+           """
+
+    assert line == 2
+  end
+
+  test "warning when module is not a component" do
+    alias List.Chars, warn: false
+
+    code = """
+    <div>
+      <Chars />
+    </div>
+    """
+
+    {:warn, line, message} = run_compile(code, __ENV__)
+
+    assert message =~ "cannot render <Chars> (module List.Chars is not a component)"
     assert line == 2
   end
 
@@ -658,6 +654,30 @@ defmodule Surface.CompilerSyncTest do
 
     assert message =~ ~S(Unknown property "nonExistingProp" for component <Button>)
     assert line == 4
+  end
+
+  test "warning on undefined assign in property" do
+    code = """
+    <div prop={{ @assign }} />
+    """
+
+    {:warn, line, message} = compile_component(code)
+
+    assert message =~ ~S(undefined assign `@assign`.)
+    assert line == 1
+  end
+
+  test "warning on undefined assign in interpolation" do
+    code = """
+    <div>
+      {{ @assign }}
+    </div>
+    """
+
+    {:warn, line, message} = compile_component(code)
+
+    assert message =~ ~S(undefined assign `@assign`.)
+    assert line == 2
   end
 
   test "warning on missing required property" do
@@ -744,6 +764,40 @@ defmodule Surface.CompilerSyncTest do
 
     assert output =~ "stateful live components must have a HTML root element"
     assert extract_line(output) == 6
+  end
+
+  defp compile_component(code) do
+    id = :erlang.unique_integer([:positive]) |> to_string()
+
+    component_code = """
+    defmodule CompilerTestComponent_#{id} do; \
+      use Surface.Component; \
+      def render(assigns) do; \
+        ~H"#{code}" \
+      end; \
+    end\
+    """
+
+    output =
+      capture_io(:standard_error, fn ->
+        # Setting line to 0 here because we aren't using heredoc for the above code and so the lines would
+        # be off
+        {{:module, module, _, _}, _} = Code.eval_string(component_code, [], %{__ENV__ | line: 0})
+        send(self(), {:result, module})
+      end)
+
+    result =
+      receive do
+        {:result, result} -> result
+      end
+
+    case output do
+      "" ->
+        {:ok, result}
+
+      message ->
+        {:warn, extract_line(output), message}
+    end
   end
 
   defp run_compile(code, env) do

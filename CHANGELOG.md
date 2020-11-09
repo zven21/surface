@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.1.0-rc.2 (2020-11-04)
+
+  * Update liveview to latest v0.15-dev (f986171)
+  * New wrapper components `Surface.Components.{For, If}` for when the `:for` and `:if` directives aren't sufficient (#184)
+  * Allow double braces within interpolation (#171)
+  * Add new `Surface.Components.FieldContext` to support form fields without wrapping divs (#172)
+  * Improve error message for unloaded modules (#174)
+  * Fix issue with `:for` modifiers on components (#176)
+  * Expose form instance as slot prop on `Surface.Components.Form` (#183)
+  * Don't initialize data assigns without default value (#195)
+
+## v0.1.0-rc.1 (2020-10-21)
+
+  * Fix support for Elixir >= v1.11
+  * Update liveview to latest v0.15-dev (597c5dd)
+  * Add undefined assign check for `Surface.{LiveComponent,Component,LiveView}`
+  * New form controls wrappers: `<DateTimeSelect>` and `<TimeSelect>`.
+  * Force recompilation of the parent component after fixing errors on any of its children.
+
 ## v0.1.0-rc.0 (2020-10-06)
 
   * Update LiveView to v0.15-dev (0f592a4).

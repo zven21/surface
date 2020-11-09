@@ -23,6 +23,7 @@ defmodule LiveComponentTest do
     use Surface.LiveComponent
 
     data label, :string, default: "Initial stateful"
+    data assigned_in_update, :any
 
     def update(_assigns, socket) do
       {:ok, assign(socket, assigned_in_update: "Assinged in update/2")}
@@ -97,12 +98,27 @@ defmodule LiveComponentTest do
     end
   end
 
+  defmodule LiveComponentDataWithoutDefault do
+    use Surface.LiveComponent
+
+    data count, :integer
+
+    def render(assigns) do
+      ~H"""
+      <div>{{ Map.has_key?(assigns, :count) }}</div>
+      """
+    end
+  end
+
   test "render content without slot props" do
-    code = """
-    <InfoProviderWithoutSlotProps>
-      <span>Hi there!</span>
-    </InfoProviderWithoutSlotProps>
-    """
+    code =
+      quote do
+        ~H"""
+        <InfoProviderWithoutSlotProps>
+          <span>Hi there!</span>
+        </InfoProviderWithoutSlotProps>
+        """
+      end
 
     assert render_live(code) =~ """
            <div><span>Hi there!</span></div>
@@ -110,11 +126,14 @@ defmodule LiveComponentTest do
   end
 
   test "render content with slot props" do
-    code = """
-    <InfoProvider :let={{ info: my_info }}>
-      <span>{{ my_info }}</span>
-    </InfoProvider>
-    """
+    code =
+      quote do
+        ~H"""
+        <InfoProvider :let={{ info: my_info }}>
+          <span>{{ my_info }}</span>
+        </InfoProvider>
+        """
+      end
 
     assert render_live(code) =~ """
            <div><span>Hi there!</span></div>
@@ -122,13 +141,27 @@ defmodule LiveComponentTest do
   end
 
   test "render stateful component with event" do
-    code = """
-    <LiveComponentWithEvent event="click-event" id="button" />
-    """
+    code =
+      quote do
+        ~H"""
+        <LiveComponentWithEvent event="click-event" id="button" />
+        """
+      end
 
     assert render_live(code) =~ """
            <button data-phx-component=\"1\" phx-click=\"click-event\"></button>
            """
+  end
+
+  test "do not set assign for `data` without default value" do
+    code =
+      quote do
+        ~H"""
+        <LiveComponentDataWithoutDefault id="counter"/>
+        """
+      end
+
+    assert render_live(code) =~ "false"
   end
 
   test "render stateless component" do

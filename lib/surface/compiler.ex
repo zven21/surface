@@ -39,7 +39,11 @@ defmodule Surface.Compiler do
 
   @template_directive_handlers [Surface.Directive.Let]
 
-  @slot_directive_handlers [Surface.Directive.SlotProps]
+  @slot_directive_handlers [
+    Surface.Directive.If,
+    Surface.Directive.For,
+    Surface.Directive.SlotProps
+  ]
 
   @void_elements [
     "area",
@@ -67,12 +71,13 @@ defmodule Surface.Compiler do
   end
 
   defmodule CompileMeta do
-    defstruct [:line_offset, :file, :caller]
+    defstruct [:line_offset, :file, :caller, :checks]
 
     @type t :: %__MODULE__{
             line_offset: non_neg_integer(),
             file: binary(),
-            caller: Macro.Env.t()
+            caller: Macro.Env.t(),
+            checks: Keyword.t(boolean())
           }
   end
 
@@ -83,12 +88,15 @@ defmodule Surface.Compiler do
   string is also the first line of the file, then this should be 1. If this is being called within a macro (say to process a heredoc
   passed to ~H), this should be __CALLER__.line + 1.
   """
-  @spec compile(binary, non_neg_integer(), Macro.Env.t(), binary()) :: [Surface.AST.t()]
-  def compile(string, line_offset, caller, file \\ "nofile") do
+  @spec compile(binary, non_neg_integer(), Macro.Env.t(), binary(), Keyword.t()) :: [
+          Surface.AST.t()
+        ]
+  def compile(string, line_offset, caller, file \\ "nofile", opts \\ []) do
     compile_meta = %CompileMeta{
       line_offset: line_offset,
       file: file,
-      caller: caller
+      caller: caller,
+      checks: opts[:checks] || []
     }
 
     string
@@ -165,6 +173,11 @@ defmodule Surface.Compiler do
         {:error, {message, line}, meta} ->
           IOHelper.warn(message, compile_meta.caller, fn _ -> line end)
           %AST.Error{message: message, meta: meta}
+
+        {:error, {message, details, line}, meta} ->
+          details = if details, do: "\n\n" <> details, else: ""
+          IOHelper.warn(message <> details, compile_meta.caller, fn _ -> line end)
+          %AST.Error{message: message, meta: meta}
       end
     end
   end
@@ -194,10 +207,14 @@ defmodule Surface.Compiler do
   defp convert_node_to_ast(:interpolation, {_, text, node_meta}, compile_meta) do
     meta = Helpers.to_meta(node_meta, compile_meta)
 
+    expr = Helpers.interpolation_to_quoted!(text, meta)
+
+    Helpers.perform_assigns_checks(expr, compile_meta)
+
     {:ok,
      %AST.Interpolation{
        original: text,
-       value: Helpers.interpolation_to_quoted!(text, meta),
+       value: expr,
        meta: meta
      }}
   end
@@ -303,11 +320,12 @@ defmodule Surface.Compiler do
   defp convert_node_to_ast(:component, {name, attributes, children, node_meta}, compile_meta) do
     # TODO: validate live views vs live components ?
     meta = Helpers.to_meta(node_meta, compile_meta)
+    mod = Helpers.actual_component_module!(name, meta.caller)
+    meta = Map.merge(meta, %{module: mod, node_alias: name})
 
-    with {:ok, mod} <- Helpers.module_name(name, meta.caller),
+    with :ok <- Helpers.validate_component_module(mod, name),
          true <- function_exported?(mod, :component_type, 0),
          component_type <- mod.component_type(),
-         meta <- Map.merge(meta, %{module: mod, node_alias: name}),
          # This is a little bit hacky. :let will only be extracted for the default
          # template if `mod` doesn't export __slot_name__ (i.e. if it isn't a slotable component)
          # we pass in and modify the attributes so that non-slotable components are not
@@ -344,6 +362,9 @@ defmodule Surface.Compiler do
 
       {:ok, maybe_call_transform(result)}
     else
+      {:error, message, details} ->
+        {:error, {"cannot render <#{name}> (#{message})", details, meta.line}, meta}
+
       {:error, message} ->
         {:error, {"cannot render <#{name}> (#{message})", meta.line}, meta}
 
@@ -358,8 +379,10 @@ defmodule Surface.Compiler do
          compile_meta
        ) do
     meta = Helpers.to_meta(node_meta, compile_meta)
+    mod = Helpers.actual_component_module!(name, meta.caller)
+    meta = Map.merge(meta, %{module: mod, node_alias: name})
 
-    with {:ok, mod} <- Helpers.module_name(name, meta.caller),
+    with :ok <- Helpers.validate_component_module(mod, name),
          meta <- Map.merge(meta, %{module: mod, node_alias: name}),
          true <- function_exported?(mod, :expand, 3),
          {:ok, directives, attributes} <-
@@ -379,6 +402,9 @@ defmodule Surface.Compiler do
         {:error,
          {"cannot render <#{name}> (MacroComponents must export an expand/3 function)",
           meta.line}, meta}
+
+      {:error, message, details} ->
+        {:error, {"cannot render <#{name}> (#{message})", details, meta.line}, meta}
 
       {:error, message} ->
         {:error, {"cannot render <#{name}> (#{message})", meta.line}, meta}
@@ -448,6 +474,7 @@ defmodule Surface.Compiler do
     {originals, quoted_values} =
       Enum.reduce(values, {[], []}, fn
         {:attribute_expr, value, expr_meta}, {originals, quoted_values} ->
+          expr_meta = Helpers.to_meta(expr_meta, attr_meta)
           {["{{#{value}}}" | originals], [quote_embedded_expr(value, expr_meta) | quoted_values]}
 
         value, {originals, quoted_values} ->
@@ -575,7 +602,7 @@ defmodule Surface.Compiler do
     {name, modifiers} =
       case String.split(attr_name, ".") do
         [name] ->
-          {name, []}
+          {name, Map.get(meta, :modifiers, [])}
 
         [name | modifiers] ->
           {name, modifiers}
